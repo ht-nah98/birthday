@@ -4,9 +4,11 @@ work/
 audio/
 .omc/
 # Ảnh, video gia đình và nhạc có bản quyền: KHÔNG đẩy lên repo (đang công khai)
+hello/
 assets/**
 !assets/MANIFEST.md
 *.mp4
 *.mp3
 *.wav
 *.zip
+__pycache__/

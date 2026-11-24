@@ -55,14 +55,18 @@ const ANGLE = opt('angle') ?? process.env.PDOOM_ANGLE ?? (process.platform === '
 
 async function openPage(url: string) {
   const browser = await chromium.launch({
-    channel: 'chrome',
+    // PDOOM_CHROME=/path/to/chrome: dùng Chromium của Playwright khi máy không cài Google Chrome (WSL không có sudo)
+    ...(process.env.PDOOM_CHROME ? { executablePath: process.env.PDOOM_CHROME } : { channel: 'chrome' }),
     headless: !flag('headed'),
-    args: [`--use-angle=${ANGLE}`, ...(ANGLE === 'vulkan' ? ['--enable-features=Vulkan'] : []), '--enable-gpu-rasterization', '--ignore-gpu-blocklist', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
+    args: [...(flag('headed') ? ['--window-position=-2600,0'] : []), ...(process.env.PDOOM_EXTRA_ARGS ? process.env.PDOOM_EXTRA_ARGS.split(' ') : []), `--use-angle=${ANGLE}`, ...(ANGLE === 'vulkan' ? ['--enable-features=Vulkan'] : []), '--enable-gpu-rasterization', '--ignore-gpu-blocklist', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
   });
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
   const logs: string[] = [];
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') logs.push(`[${m.type()}] ${m.text()}`); });
   page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
+  // chẩn đoán lỗi 'Execution context was destroyed': trang bị nạp lại hay tiến trình renderer chết?
+  page.on('crash', () => console.error(`\n[render] PAGE CRASH (renderer/GPU process) at ${new Date().toISOString()}`));
+  page.on('framenavigated', (fr) => { if (fr === page.mainFrame()) console.error(`\n[render] navigated: ${fr.url()} at ${new Date().toISOString()}`); });
   const only = opt('only');
   await page.goto(`${url}/?export=1${opt('set') ? `&set=${opt('set')}` : ''}${opt('query') ? `&${opt('query')}` : ''}${only ? `&only=${only}` : ''}${SCALE !== 1 ? `&scale=${SCALE}` : ''}`);
   await page.waitForFunction(() => (window as any).__pdoom?.ready || (window as any).__pdoom?.error, null, { timeout: 120000 });

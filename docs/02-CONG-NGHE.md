@@ -14,6 +14,9 @@ Hiệu ứng trong `trailer.ts`: shader ảnh `photo` (cắt theo tâm nhìn, l�
 Tốc độ đo trên RTX 4070 Ti: 17 ms/khung với 8 khung con (đoạn 37–39 s).
 
 ## Bẫy đã gặp
+- **WSL2 (máy RTX 2060): Chromium chạy headless rơi về SwiftShader (CPU).** Phải chạy có cửa sổ, `--use-angle=gl`, với `GALLIUM_DRIVER=d3d12 LD_LIBRARY_PATH=/usr/lib/wsl/lib`. Script `tools/wsl_render.sh` làm sẵn những việc này, cửa sổ được đẩy ra ngoài màn hình. Máy không có Google Chrome nên dùng Chromium của Playwright (`PDOOM_CHROME`).
+- **Vite trên /mnt/d (WSL) không nhận biết file đã sửa**, vì ổ này không có inotify, nên nó cứ phục vụ bản cũ. Đã bật `watch.usePolling` trong `vite.config.ts`.
+- **`THREE.AdditiveBlending` nhân với alpha**: shader nào trả alpha = 0 sẽ không hiện gì. Dùng `additive()` trong `scenes/v2/kit.ts` (One/One).
 - **`bun` không có trong PATH** của Node mặc định trên máy cũ: nằm ở bản Node 22.22.0.
 - **Linux + NVIDIA phải dùng `--use-angle=vulkan`** (render.ts tự chọn), nếu không Chrome rơi về CPU.
 - **Không dùng chung một Layer2D cho mặt nạ và chữ**: khung sau hiện lại chữ khung trước (thấy ở 38 s và tiêu đề). Đã tách `mtext`; nguyên nhân gốc trong Chrome chưa xác minh.
