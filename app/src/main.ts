@@ -97,7 +97,7 @@ function setupExport() {
 function setupPlayer() {
   const q = new URLSearchParams(location.search);
   // ?film=2: phần 2 (ảnh + lời chúc trên "Đi Về Nhà"); ?v=1: trailer v1 cũ; mặc định: trailer v2
-  const audio = new Audio(q.get('film') === '2' ? 'audio/phan2.mp3' : q.get('v') === '1' ? 'audio/trailer.mp3' : 'audio/trailer_v2.mp3');
+  const audio = new Audio(q.get('film') === '3' ? 'audio/ban2.mp3' : q.get('film') === '2' ? 'audio/phan2.mp3' : q.get('v') === '1' ? 'audio/trailer.mp3' : 'audio/trailer_v2.mp3');
   audio.preload = 'auto';
   const ui = document.getElementById('ui')!;
   const scrub = document.getElementById('scrub') as HTMLInputElement;

@@ -27,11 +27,12 @@ function wishStream(): string[] {
   return Array.from(out.join(' ')).filter((c) => !/\s/.test(c));
 }
 
-let ATLAS: { tex: THREE.Texture; index: Map<string, number>; grid: number; nText: number; textIdx: number[] } | null = null;
+type Atlas = { tex: THREE.Texture; index: Map<string, number>; grid: number; nText: number; textIdx: number[] };
+const ATLASES = new Map<string, Atlas>();
 
-function atlas() {
-  if (ATLAS) return ATLAS;
-  const stream = wishStream();
+function atlas(stream: string[]) {
+  const key = stream.join('');
+  if (ATLASES.has(key)) return ATLASES.get(key)!;
   const chars = Array.from(new Set([...DARK, ...EDGE, ...stream]));
   const grid = Math.ceil(Math.sqrt(chars.length)), cs = 64;
   const cv = document.createElement('canvas'); cv.width = cv.height = grid * cs;
@@ -50,16 +51,17 @@ function atlas() {
   tex.flipY = false; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true;
   tex.colorSpace = THREE.NoColorSpace;
   const textIdx = Array.from(new Set(stream)).map((ch) => index.get(ch)!);
-  ATLAS = { tex, index, grid, nText: textIdx.length, textIdx };
-  return ATLAS;
+  const A: Atlas = { tex, index, grid, nText: textIdx.length, textIdx };
+  ATLASES.set(key, A);
+  return A;
 }
 
 const VERT = /* glsl */ `precision highp float;
 in vec3 position;
-in vec2 iHome; in float iGlyph; in float iLum; in float iSeed; in float iScale;
+in vec2 iHome; in float iGlyph; in float iLum; in float iSeed; in float iScale; in vec3 iCol;
 uniform vec2 res, center, origin; uniform float cell, form, diss, spread, fromPoint, t, flick, grid, amt, halfRows, fadeBottom, rise, burst;
 uniform sampler2D textIdx; uniform float nText;
-out vec2 vUv; out float vA, vLum, vFly;
+out vec2 vUv; out float vA, vLum, vFly; out vec3 vCol;
 float h1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
 void main() {
   float s = iSeed;
@@ -80,7 +82,7 @@ void main() {
   gl_Position = vec4(q.x / res.x * 2.0 - 1.0, 1.0 - q.y / res.y * 2.0, 0.0, 1.0);
   float fb = fadeBottom > 0.0 ? 1.0 - smoothstep(halfRows * (1.0 - 2.0 * fadeBottom), halfRows, iHome.y) : 1.0;
   vA = k * (1.0 - d) * amt * fb;
-  vLum = iLum; vFly = fly;
+  vLum = iLum; vFly = fly; vCol = iCol;
   // vài ký tự chữ đổi liên tục như dòng mã đang chạy
   float g = iGlyph, fr = floor(t * 10.0);
   if (iGlyph >= 8.0 && h1(s * 97.0 + fr * 0.731) < flick) g = texelFetch(textIdx, ivec2(int(h1(s * 311.0 + fr) * nText), 0), 0).r;
@@ -89,8 +91,8 @@ void main() {
 }`;
 
 const FRAG = /* glsl */ `precision highp float;
-in vec2 vUv; in float vA, vLum, vFly;
-uniform sampler2D atlas; uniform vec3 cDim, cBone, cHot, cTint; uniform float tint, gain;
+in vec2 vUv; in float vA, vLum, vFly; in vec3 vCol;
+uniform sampler2D atlas; uniform vec3 cDim, cBone, cHot, cTint, cFly; uniform float tint, gain, colorAmt, normalBlend;
 out vec4 fragColor;
 void main() {
   float a = texture(atlas, vUv).r;
@@ -99,8 +101,11 @@ void main() {
   vec3 base = mix(cDim, cBone, smoothstep(0.12, 0.85, l)) * (0.10 + 0.78 * pow(l, 1.25));
   base = mix(base, cHot * 0.9, smoothstep(0.86, 1.0, l) * 0.55);
   base = mix(base, cTint * (0.12 + 0.8 * pow(l, 1.2)), tint);
-  vec3 col = mix(base, cHot * 1.7, vFly * 0.75);
-  fragColor = vec4(col * a * vA * gain, 0.0);
+  // chế độ màu (bản 2): mỗi ký tự mang màu thật của ảnh; khi bay đổi sang cFly
+  base = mix(base, vCol * gain, colorAmt);
+  vec3 col = mix(base, colorAmt > 0.5 ? cFly : cHot * 1.7, vFly * 0.75);
+  float A = a * vA;
+  fragColor = normalBlend > 0.5 ? vec4(col * A, A) : vec4(col * A * gain, 0.0);
 }`;
 
 export interface GlyphOpts {
@@ -112,6 +117,12 @@ export interface GlyphOpts {
   floor?: number;
   /** false = không làm mờ mép khung (chữ số, hình vẽ) */
   border?: boolean;
+  /** nguồn ký tự (mặc định: lời chúc trailer v2 trong cues.ts) */
+  text?: string;
+  /** tô mỗi ký tự bằng màu thật của ảnh (0..1) và tăng bão hoà; 'normal' = phủ thường (nền sáng/màu), mặc định cộng sáng */
+  color?: number; saturate?: number; blend?: 'add' | 'normal';
+  /** màu ký tự khi đang bay (chế độ màu) */
+  flyColor?: [number, number, number];
 }
 
 export interface GlyphState {
@@ -134,6 +145,8 @@ export interface GlyphState {
   rise?: number;
   /** đẩy văng ra từ tâm khi tan (px), cho cú nổ */
   burst?: number;
+  /** nhân độ sáng màu ký tự (mặc định 1) */
+  gain?: number;
 }
 
 export class GlyphPortrait {
@@ -154,7 +167,8 @@ export class GlyphPortrait {
   fromCanvas(cv: HTMLCanvasElement) { this.build(cv); return this; }
 
   private build(img: HTMLImageElement | HTMLCanvasElement) {
-    const A = atlas();
+    const stream = this.o.text ? Array.from(this.o.text).filter((c) => !/\s/.test(c)) : wishStream();
+    const A = atlas(stream);
     const rows = this.o.rows ?? 110;
     const iw = img.width, ih = img.height;
     const cols = Math.round((rows * iw) / ih * 1.65); // ô ký tự mono cao ~1,65 lần rộng
@@ -210,8 +224,9 @@ export class GlyphPortrait {
     ms.sort((a, b) => a - b);
     const m95 = Math.max(ms[Math.floor(ms.length * 0.95)] ?? 1, 1e-3);
     const edgeT = this.o.edge ?? 0.6, floor = this.o.floor ?? 0.05;
-    const stream = wishStream(); let si = 0;
-    const home: number[] = [], glyph: number[] = [], lum: number[] = [], seed: number[] = [], scale: number[] = [];
+    let si = 0;
+    const home: number[] = [], glyph: number[] = [], lum: number[] = [], seed: number[] = [], scale: number[] = [], col: number[] = [];
+    const sat = this.o.saturate ?? 1.25, lin = (v: number) => Math.pow(Math.min(1, Math.max(0, v)), 2.2);
     const cw = 1 / 1.65; // bề rộng ô theo đơn vị chiều cao ô
     for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
       const i = y * cols + x, l = cl[i]!, a = ca[i]!;
@@ -229,6 +244,12 @@ export class GlyphPortrait {
       lum.push(l * Math.min(1, a * 1.4));
       const h = Math.sin(i * 12.9898 + 78.233) * 43758.5453; seed.push(h - Math.floor(h));
       scale.push(0.72 + 0.36 * l);
+      { // màu trung bình 2×2 điểm ảnh của ô, tăng bão hoà quanh độ sáng
+        let R = 0, G = 0, Bc = 0;
+        for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) { const j = ((y * 2 + dy) * gw + x * 2 + dx) * 4; R += d[j]!; G += d[j + 1]!; Bc += d[j + 2]!; }
+        R /= 1020; G /= 1020; Bc /= 1020; const Y = 0.299 * R + 0.587 * G + 0.114 * Bc;
+        col.push(lin(Y + (R - Y) * sat), lin(Y + (G - Y) * sat), lin(Y + (Bc - Y) * sat));
+      }
     }
     this.rows = rows; this.cols = cols; this.count = lum.length;
 
@@ -240,6 +261,7 @@ export class GlyphPortrait {
     geo.setAttribute('iLum', new THREE.InstancedBufferAttribute(new Float32Array(lum), 1));
     geo.setAttribute('iSeed', new THREE.InstancedBufferAttribute(new Float32Array(seed), 1));
     geo.setAttribute('iScale', new THREE.InstancedBufferAttribute(new Float32Array(scale), 1));
+    geo.setAttribute('iCol', new THREE.InstancedBufferAttribute(new Float32Array(col), 3));
     geo.instanceCount = this.count;
     const ti = new THREE.DataTexture(new Float32Array(A.textIdx), A.textIdx.length, 1, THREE.RedFormat, THREE.FloatType);
     ti.needsUpdate = true;
@@ -253,6 +275,7 @@ export class GlyphPortrait {
         textIdx: { value: ti }, nText: { value: A.nText }, atlas: { value: A.tex },
         cDim: { value: v3('graphite') }, cBone: { value: v3('bone') }, cHot: { value: v3('ember') },
         cTint: { value: new THREE.Vector3(1.0, 0.62, 0.28) }, tint: { value: 0 }, gain: { value: 1 },
+        colorAmt: { value: this.o.color ?? 0 }, normalBlend: { value: this.o.blend === 'normal' ? 1 : 0 }, cFly: { value: new THREE.Vector3(...(this.o.flyColor ?? [1, 0.85, 0.5])) },
       },
       // y màn hình hướng xuống làm đảo chiều tam giác: vẽ cả hai mặt, nếu không bị cắt hết (không ra hình)
       transparent: true, depthTest: false, depthWrite: false, blending: THREE.CustomBlending, side: THREE.DoubleSide,
@@ -260,6 +283,7 @@ export class GlyphPortrait {
     const m = this.mat;
     m.blendEquation = THREE.AddEquation; m.blendSrc = THREE.OneFactor; m.blendDst = THREE.OneFactor;
     m.blendSrcAlpha = THREE.ZeroFactor; m.blendDstAlpha = THREE.OneFactor;
+    if (this.o.blend === 'normal') { m.blendDst = THREE.OneMinusSrcAlphaFactor; m.blendSrcAlpha = THREE.OneFactor; m.blendDstAlpha = THREE.OneMinusSrcAlphaFactor; }
     this.mesh = new THREE.Mesh(geo, m); this.mesh.frustumCulled = false;
     this.scene.add(this.mesh);
   }
@@ -272,7 +296,7 @@ export class GlyphPortrait {
     (u.origin!.value as THREE.Vector2).set(s.ox ?? s.x, s.oy ?? s.y);
     u.cell!.value = s.h / this.rows; u.form!.value = s.form; u.diss!.value = s.diss; u.t!.value = t;
     u.spread!.value = s.spread ?? s.h * 0.5; u.fromPoint!.value = s.fromPoint ?? 0; u.amt!.value = amt;
-    u.tint!.value = s.tint ?? 0; u.fadeBottom!.value = s.fadeBottom ?? 0; u.flick!.value = s.flick ?? 0.02; u.rise!.value = s.rise ?? 1; u.burst!.value = s.burst ?? 0;
+    u.tint!.value = s.tint ?? 0; u.fadeBottom!.value = s.fadeBottom ?? 0; u.flick!.value = s.flick ?? 0.02; u.rise!.value = s.rise ?? 1; u.burst!.value = s.burst ?? 0; u.gain!.value = s.gain ?? 1;
     r.setRenderTarget(out);
     r.render(this.scene, this.cam);
   }

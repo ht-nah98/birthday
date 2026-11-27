@@ -44,8 +44,8 @@ export class AudioData {
 
   static async load(): Promise<AudioData> {
     // ?film=2: phần 2 có bản đo riêng (tools/splice_p2.py)
-    const film2 = new URLSearchParams(location.search).get('film') === '2';
-    for (const url of film2 ? ['data/audio_p2.json'] : ['data/audio.json', 'data/audio.approx.json']) {
+    const film = new URLSearchParams(location.search).get('film');
+    for (const url of film === '3' ? ['data/audio_b2.json'] : film === '2' ? ['data/audio_p2.json'] : ['data/audio.json', 'data/audio.approx.json']) {
       const r = await fetch(url);
       if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) return new AudioData(await r.json());
     }
